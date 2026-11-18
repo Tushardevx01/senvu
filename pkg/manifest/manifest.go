@@ -107,7 +107,7 @@ func validatePath(p string) error {
 	}
 
 	// Reject absolute paths.
-	if filepath.IsAbs(p) || strings.HasPrefix(p, "/") || (len(p) >= 2 && p[1] == ':') {
+	if filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") || (len(p) >= 2 && p[1] == ':') {
 		return fmt.Errorf("path must be relative, got absolute: %q", p)
 	}
 

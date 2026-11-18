@@ -47,8 +47,10 @@ func SafePath(root, path string) (string, error) {
 			}
 
 			// Ensure realCurr is within realRoot.
-			relReal, relErr := filepath.Rel(realRoot, realCurr)
-			if relErr != nil || strings.HasPrefix(relReal, "..") || (relReal == ".." && realCurr != realRoot) {
+			normRealRoot := normalizePathForComparison(realRoot)
+			normRealCurr := normalizePathForComparison(realCurr)
+			relReal, relErr := filepath.Rel(normRealRoot, normRealCurr)
+			if relErr != nil || strings.HasPrefix(relReal, "..") || (relReal == ".." && normRealCurr != normRealRoot) {
 				return "", fmt.Errorf("path %q resolves outside root %q", path, root)
 			}
 
@@ -84,6 +86,17 @@ func reverseSlice(s []string) []string {
 		res[len(s)-1-i] = v
 	}
 	return res
+}
+
+func normalizePathForComparison(p string) string {
+	if strings.HasPrefix(p, `\\?\UNC\`) {
+		p = `\\` + strings.TrimPrefix(p, `\\?\UNC\`)
+	}
+	p = strings.TrimPrefix(p, `\\?\`)
+	if len(p) >= 2 && p[1] == ':' {
+		p = strings.ToUpper(string(p[0])) + p[1:]
+	}
+	return filepath.Clean(p)
 }
 
 // AtomicWrite writes data to a file atomically by writing to a temporary
@@ -124,7 +137,11 @@ func AtomicWrite(path string, data []byte, perm os.FileMode) error {
 	}
 
 	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename %q to %q: %w", tmpName, path, err)
+		// On Windows or certain filesystems, remove target and retry if rename fails.
+		_ = os.Remove(path)
+		if retryErr := os.Rename(tmpName, path); retryErr != nil {
+			return fmt.Errorf("rename %q to %q: %w", tmpName, path, err)
+		}
 	}
 
 	success = true

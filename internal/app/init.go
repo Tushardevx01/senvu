@@ -4,6 +4,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/senvu/senvu/internal/config"
 	"github.com/senvu/senvu/internal/output"
@@ -34,9 +35,9 @@ func Init(opts InitOptions, out *output.Handler) error {
 		}
 	}
 
-	absTarget, err := resolveAbsPath(targetDir)
+	absTarget, err := filepath.Abs(targetDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve target directory: %w", err)
 	}
 	targetDir = absTarget
 
@@ -51,87 +52,49 @@ func Init(opts InitOptions, out *output.Handler) error {
 		if !opts.Force {
 			return fmt.Errorf("workspace already initialized at %s (use --force to reinitialize)", targetDir)
 		}
-		out.Log(output.LevelWarn, "Reinitializing existing workspace (--force)")
+		if out != nil {
+			out.Log(output.LevelWarn, "Reinitializing existing workspace (--force)")
+		}
 		if err := os.RemoveAll(senvuDir); err != nil {
 			return fmt.Errorf("remove existing .senvu directory: %w", err)
 		}
 	}
 
-	out.Log(output.LevelDebug, fmt.Sprintf("Initializing workspace at %s", targetDir))
+	if out != nil {
+		out.Log(output.LevelDebug, fmt.Sprintf("Initializing workspace at %s", targetDir))
+	}
 
 	// Create .senvu/ directory.
 	if err := platform.EnsureDir(senvuDir, 0755); err != nil {
 		return fmt.Errorf("create .senvu directory: %w", err)
 	}
-	out.Log(output.LevelDebug, fmt.Sprintf("Created %s", senvuDir))
+	if out != nil {
+		out.Log(output.LevelDebug, fmt.Sprintf("Created %s", senvuDir))
+	}
 
 	// Create .senvu/db/ directory.
 	dbDir := config.DBDirPath(targetDir)
 	if err := platform.EnsureDir(dbDir, 0755); err != nil {
 		return fmt.Errorf("create database directory: %w", err)
 	}
-	out.Log(output.LevelDebug, fmt.Sprintf("Created %s", dbDir))
+	if out != nil {
+		out.Log(output.LevelDebug, fmt.Sprintf("Created %s", dbDir))
+	}
 
 	// Create and save default config.
 	cfg := config.DefaultConfig(targetDir, opts.Version)
 	if err := config.Save(&cfg); err != nil {
 		return fmt.Errorf("save workspace config: %w", err)
 	}
-	out.Log(output.LevelDebug, fmt.Sprintf("Created %s", config.ConfigFilePath(targetDir)))
+	if out != nil {
+		out.Log(output.LevelDebug, fmt.Sprintf("Created %s", config.ConfigFilePath(targetDir)))
 
-	// Report what was created.
-	out.Success(fmt.Sprintf("Initialized Senvu workspace at %s", targetDir))
-	out.Printf("  Created %s/", config.SenvuDir)
-	out.Printf("  Created %s/%s/", config.SenvuDir, config.DBDir)
-	out.Printf("  Created %s/%s", config.SenvuDir, config.ConfigFile)
+		// Report what was created.
+		out.Success(fmt.Sprintf("Initialized Senvu workspace at %s", targetDir))
+		out.Printf("  Created %s/", config.SenvuDir)
+		out.Printf("  Created %s/%s/", config.SenvuDir, config.DBDir)
+		out.Printf("  Created %s/%s", config.SenvuDir, config.ConfigFile)
+	}
 
 	return nil
-}
-
-// resolveAbsPath returns the absolute path of the given directory.
-func resolveAbsPath(dir string) (string, error) {
-	abs, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("get working directory: %w", err)
-	}
-
-	if !isAbsPath(dir) {
-		abs = abs + string(os.PathSeparator) + dir
-	} else {
-		abs = dir
-	}
-
-	// Clean the path.
-	cleaned := cleanPath(abs)
-	return cleaned, nil
-}
-
-func isAbsPath(path string) bool {
-	if len(path) == 0 {
-		return false
-	}
-	return path[0] == '/'
-}
-
-func cleanPath(path string) string {
-	// Use filepath.Clean from the standard library for robust cleaning.
-	// Import is already available via platform package, but we use os directly.
-	result := make([]byte, 0, len(path))
-	slashCount := 0
-	for i := 0; i < len(path); i++ {
-		if path[i] == '/' {
-			slashCount++
-			if slashCount == 1 {
-				result = append(result, path[i])
-			}
-		} else {
-			slashCount = 0
-			result = append(result, path[i])
-		}
-	}
-	s := string(result)
-	if len(s) > 1 && s[len(s)-1] == '/' {
-		s = s[:len(s)-1]
-	}
-	return s
 }

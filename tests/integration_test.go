@@ -3,9 +3,11 @@ package tests
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -33,10 +35,18 @@ func TestMain(m *testing.M) {
 		root = parent
 	}
 
-	binPath = filepath.Join(root, "bin", "senvu")
+	binName := "senvu"
+	if runtime.GOOS == "windows" {
+		binName += ".exe"
+	}
+	binPath = filepath.Join(root, "bin", binName)
+
 	buildCmd := exec.Command("go", "build", "-o", binPath, "./cmd/senvu")
 	buildCmd.Dir = root
-	buildCmd.Env = append(os.Environ(), "GOPATH="+filepath.Join(root, ".gopath"))
+	// If a local .gopath exists in dev sandbox, append it to GOPATH.
+	if _, statErr := os.Stat(filepath.Join(root, ".gopath")); statErr == nil {
+		buildCmd.Env = append(os.Environ(), "GOPATH="+filepath.Join(root, ".gopath"))
+	}
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		panic("failed building binary: " + string(out))
 	}
@@ -62,6 +72,7 @@ func runSenvu(t *testing.T, dir string, args ...string) (string, int) {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
+			out += fmt.Sprintf("\nexec error: %v (binPath=%s)", err, binPath)
 			exitCode = -1
 		}
 	}
@@ -271,8 +282,11 @@ func TestCLI_TransferAndReconcile(t *testing.T) {
 
 	// 4. Reconcile execution with conflict preservation.
 	// Make destination newer with different content.
-	time.Sleep(10 * time.Millisecond)
+	oldTime := time.Now().Add(-10 * time.Minute)
+	newTime := time.Now()
+	os.Chtimes(filepath.Join(src, "item.txt"), oldTime, oldTime)
 	os.WriteFile(filepath.Join(dst, "item.txt"), []byte("dest modification"), 0644)
+	os.Chtimes(filepath.Join(dst, "item.txt"), newTime, newTime)
 
 	rOut, rCode := runSenvu(t, "", "reconcile", src, dst, "--yes")
 	if rCode != 0 {
