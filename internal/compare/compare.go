@@ -4,6 +4,7 @@ package compare
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -162,6 +163,12 @@ func Compare(sourceFiles, destFiles []manifest.FileEntry) *CompareResult {
 			DestModTime: f.ModTime,
 		})
 	}
+
+	sort.Slice(result.Added, func(i, j int) bool { return result.Added[i].RelPath < result.Added[j].RelPath })
+	sort.Slice(result.Removed, func(i, j int) bool { return result.Removed[i].RelPath < result.Removed[j].RelPath })
+	sort.Slice(result.Modified, func(i, j int) bool { return result.Modified[i].RelPath < result.Modified[j].RelPath })
+	sort.Slice(result.Unchanged, func(i, j int) bool { return result.Unchanged[i].RelPath < result.Unchanged[j].RelPath })
+	sort.Slice(result.Renamed, func(i, j int) bool { return result.Renamed[i].RelPath < result.Renamed[j].RelPath })
 
 	return result
 }

@@ -199,3 +199,24 @@ func TestGetSnapshotFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestRecordOperationAndWorkspace(t *testing.T) {
+	store := testDB(t)
+
+	if err := store.RecordWorkspace("/test/path", "0.1.0"); err != nil {
+		t.Fatalf("RecordWorkspace failed: %v", err)
+	}
+
+	m := testManifest()
+	if err := store.SaveSnapshot(m); err != nil {
+		t.Fatalf("SaveSnapshot failed: %v", err)
+	}
+
+	if err := store.RecordOperation("snapshot", m.SnapshotID, "success", "3 files scanned"); err != nil {
+		t.Fatalf("RecordOperation failed: %v", err)
+	}
+
+	if err := store.RecordOperation("verify", "", "success", "workspace verified"); err != nil {
+		t.Fatalf("RecordOperation without snapshotID failed: %v", err)
+	}
+}

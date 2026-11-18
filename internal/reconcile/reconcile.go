@@ -194,8 +194,8 @@ func (e *Engine) BuildPlan(sourceRoot, destRoot string) (*Plan, error) {
 		}
 
 		// Content differs between source and destination.
-		// If destination is newer than source or modified independently, report conflict to preserve it!
-		if df.ModTime.After(sf.ModTime) {
+		// If destination is newer or timestamps are identical, preserve as conflict to prevent silent data loss.
+		if df.ModTime.After(sf.ModTime) || df.ModTime.Equal(sf.ModTime) {
 			items = append(items, PlanItem{
 				RelPath:       relPath,
 				Action:        ActionConflict,
@@ -205,10 +205,10 @@ func (e *Engine) BuildPlan(sourceRoot, destRoot string) (*Plan, error) {
 				DestSize:      df.Size,
 				SourceModTime: sf.ModTime,
 				DestModTime:   df.ModTime,
-				Reason:        "destination file has newer timestamp; preserved as conflict backup",
+				Reason:        "destination file modified or conflicting with equal timestamp; preserved as conflict backup",
 			})
 		} else {
-			// Source is newer -> update destination.
+			// Source is strictly newer -> update destination.
 			items = append(items, PlanItem{
 				RelPath:       relPath,
 				Action:        ActionUpdate,

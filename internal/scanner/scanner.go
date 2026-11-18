@@ -158,71 +158,99 @@ func (s *Scanner) Scan(root string) ([]ScanResult, error) {
 		return nil, fmt.Errorf("walking directory: %w", err)
 	}
 
-	// Second pass: hash files with bounded concurrency.
+	// Second pass: hash files with bounded worker pool concurrency.
 	results := make([]ScanResult, len(items))
-	sem := make(chan struct{}, s.concurrency)
+	workerCount := s.concurrency
+	if workerCount <= 0 {
+		workerCount = runtime.NumCPU()
+	}
+	if workerCount > len(items) {
+		workerCount = len(items)
+	}
+
+	type queueItem struct {
+		idx  int
+		item workItem
+	}
+
+	workCh := make(chan queueItem, workerCount*2)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	processed := 0
 
-	for i, item := range items {
+	for w := 0; w < workerCount; w++ {
 		wg.Add(1)
-		go func(idx int, w workItem) {
+		go func() {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
+			for q := range workCh {
+				idx := q.idx
+				w := q.item
 
-			result := ScanResult{
-				RelPath: w.relPath,
-			}
+				result := ScanResult{
+					RelPath: w.relPath,
+				}
 
-			// Handle items that had walk errors.
-			if w.linfo == nil && w.info == nil {
-				result.Error = fmt.Errorf("unable to stat file: %s", w.relPath)
-				results[idx] = result
-				s.reportProgress(&mu, &processed, w.relPath)
-				return
-			}
-
-			if w.linfo == nil {
-				// Lstat failed; try to get what info we can.
-				fi, err := os.Lstat(w.absPath)
-				if err != nil {
-					result.Error = fmt.Errorf("stat error: %w", err)
+				// Handle items that had walk errors.
+				if w.linfo == nil && w.info == nil {
+					result.Error = fmt.Errorf("unable to stat file: %s", w.relPath)
 					results[idx] = result
 					s.reportProgress(&mu, &processed, w.relPath)
-					return
+					continue
 				}
-				w.linfo = fi
-			}
 
-			result.Size = w.linfo.Size()
-			result.ModTime = w.linfo.ModTime()
-			result.Mode = w.linfo.Mode()
-			result.IsSymlink = w.linfo.Mode()&os.ModeSymlink != 0
+				if w.linfo == nil {
+					// Lstat failed; try to get what info we can.
+					fi, err := os.Lstat(w.absPath)
+					if err != nil {
+						result.Error = fmt.Errorf("stat error: %w", err)
+						results[idx] = result
+						s.reportProgress(&mu, &processed, w.relPath)
+						continue
+					}
+					w.linfo = fi
+				}
 
-			// Don't hash symlinks — record them but skip hashing.
-			if result.IsSymlink {
+				result.Size = w.linfo.Size()
+				result.ModTime = w.linfo.ModTime()
+				result.Mode = w.linfo.Mode()
+				result.IsSymlink = w.linfo.Mode()&os.ModeSymlink != 0
+
+				// Don't hash symlinks — record them but skip hashing.
+				if result.IsSymlink {
+					results[idx] = result
+					s.reportProgress(&mu, &processed, w.relPath)
+					continue
+				}
+
+				// Hash regular files.
+				if w.linfo.Mode().IsRegular() {
+					hash, err := integrity.HashFile(w.absPath)
+					if err != nil {
+						result.Error = fmt.Errorf("hashing file: %w", err)
+					} else {
+						// Detect file modifications/replacements during hashing.
+						if postFi, postErr := os.Lstat(w.absPath); postErr == nil {
+							if postFi.Size() != result.Size || !postFi.ModTime().Equal(result.ModTime) {
+								result.Error = fmt.Errorf("file modified during hashing: %s", w.relPath)
+							} else {
+								result.Hash = hash
+							}
+						} else {
+							result.Error = fmt.Errorf("file inaccessible after hashing: %w", postErr)
+						}
+					}
+				}
+
 				results[idx] = result
 				s.reportProgress(&mu, &processed, w.relPath)
-				return
 			}
-
-			// Hash regular files.
-			if w.linfo.Mode().IsRegular() {
-				hash, err := integrity.HashFile(w.absPath)
-				if err != nil {
-					result.Error = fmt.Errorf("hashing file: %w", err)
-				} else {
-					result.Hash = hash
-				}
-			}
-
-			results[idx] = result
-			s.reportProgress(&mu, &processed, w.relPath)
-		}(i, item)
+		}()
 	}
 
+	for i, item := range items {
+		workCh <- queueItem{idx: i, item: item}
+	}
+	close(workCh)
 	wg.Wait()
 
 	// Sort results by relative path for deterministic output.

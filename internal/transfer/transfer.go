@@ -4,6 +4,7 @@
 package transfer
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/senvu/senvu/internal/integrity"
 	"github.com/senvu/senvu/internal/platform"
+	"github.com/zeebo/blake3"
 )
 
 // ConflictPolicy defines how transfer handles an existing file with different content.
@@ -137,24 +139,28 @@ func (e *Engine) TransferFile(sourceRoot, destRoot, relPath string, opts Options
 		return nil, fmt.Errorf("source is not a regular file: %s", srcPath)
 	}
 
-	srcHash, err := integrity.HashFile(srcPath)
-	if err != nil {
-		return nil, fmt.Errorf("hashing source file: %w", err)
-	}
+	var srcHash string
 
 	// Check if destination exists.
-	_, destErr := os.Stat(destPath)
+	destInfo, destErr := os.Stat(destPath)
 	if destErr == nil {
-		// Destination exists. Check if content is already identical.
-		destHash, err := integrity.HashFile(destPath)
-		if err == nil && destHash == srcHash {
-			// Already identical, nothing to do.
-			return &TransferredFile{
-				RelPath: relPath,
-				Size:    srcInfo.Size(),
-				Hash:    srcHash,
-				ModTime: srcInfo.ModTime(),
-			}, nil
+		// Destination exists. If file size matches, check if content is already identical.
+		if destInfo.Size() == srcInfo.Size() {
+			var err error
+			srcHash, err = integrity.HashFile(srcPath)
+			if err != nil {
+				return nil, fmt.Errorf("hashing source file: %w", err)
+			}
+			destHash, err := integrity.HashFile(destPath)
+			if err == nil && destHash == srcHash {
+				// Already identical, nothing to do.
+				return &TransferredFile{
+					RelPath: relPath,
+					Size:    srcInfo.Size(),
+					Hash:    srcHash,
+					ModTime: srcInfo.ModTime(),
+				}, nil
+			}
 		}
 
 		// Content differs -> Conflict!
@@ -163,9 +169,8 @@ func (e *Engine) TransferFile(sourceRoot, destRoot, relPath string, opts Options
 			return nil, fmt.Errorf("conflict detected at %q: destination exists with different content (aborting)", relPath)
 		case ConflictPolicyPreserve:
 			if !opts.DryRun {
-				// Preserve existing file by renaming.
-				timestamp := time.Now().UTC().Format("20060102T150405Z")
-				preservedPath := destPath + ".conflict." + timestamp
+				// Preserve existing file by renaming to a collision-free archive path.
+				preservedPath := uniqueConflictPath(destPath)
 				if err := os.Rename(destPath, preservedPath); err != nil {
 					return nil, fmt.Errorf("preserving conflicting file: %w", err)
 				}
@@ -178,6 +183,13 @@ func (e *Engine) TransferFile(sourceRoot, destRoot, relPath string, opts Options
 	}
 
 	if opts.DryRun {
+		if srcHash == "" {
+			var err error
+			srcHash, err = integrity.HashFile(srcPath)
+			if err != nil {
+				return nil, fmt.Errorf("hashing source file: %w", err)
+			}
+		}
 		return &TransferredFile{
 			RelPath: relPath,
 			Size:    srcInfo.Size(),
@@ -211,11 +223,15 @@ func (e *Engine) TransferFile(sourceRoot, destRoot, relPath string, opts Options
 	}
 	defer srcFile.Close()
 
+	hasher := blake3.New()
 	buf := make([]byte, 64*1024)
 	var written int64
 	for {
 		nr, rErr := srcFile.Read(buf)
 		if nr > 0 {
+			if _, hErr := hasher.Write(buf[:nr]); hErr != nil {
+				return nil, fmt.Errorf("hashing transfer stream: %w", hErr)
+			}
 			nw, wErr := tmpFile.Write(buf[:nr])
 			if wErr != nil {
 				return nil, fmt.Errorf("writing to temporary file: %w", wErr)
@@ -233,6 +249,13 @@ func (e *Engine) TransferFile(sourceRoot, destRoot, relPath string, opts Options
 		}
 	}
 
+	streamHash := hex.EncodeToString(hasher.Sum(nil))
+	if srcHash == "" {
+		srcHash = streamHash
+	} else if srcHash != streamHash {
+		return nil, fmt.Errorf("source file changed during transfer: expected %s, got %s", srcHash, streamHash)
+	}
+
 	if err := tmpFile.Sync(); err != nil {
 		return nil, fmt.Errorf("syncing temporary file: %w", err)
 	}
@@ -240,7 +263,7 @@ func (e *Engine) TransferFile(sourceRoot, destRoot, relPath string, opts Options
 		return nil, fmt.Errorf("closing temporary file: %w", err)
 	}
 
-	// Verify written file hash BEFORE moving into place.
+	// Verify written file hash on disk BEFORE moving into place.
 	writtenHash, err := integrity.HashFile(tmpName)
 	if err != nil {
 		return nil, fmt.Errorf("verifying written file hash: %w", err)
@@ -346,20 +369,30 @@ func (e *Engine) TransferDirectory(sourceRoot, destRoot string, opts Options) (*
 		}
 		relPath = filepath.ToSlash(relPath)
 
-		// Check if destination exists with same hash before transferring.
+		// Check if destination exists before transferring.
 		destFilePath := filepath.Join(absDest, filepath.FromSlash(relPath))
-		if _, dErr := os.Stat(destFilePath); dErr == nil {
-			srcHash, sErr := integrity.HashFile(path)
-			dstHash, dstErr := integrity.HashFile(destFilePath)
-			if sErr == nil && dstErr == nil && srcHash == dstHash {
-				result.Skipped = append(result.Skipped, SkippedFile{
-					RelPath: relPath,
-					Reason:  "identical content already at destination",
-				})
-				return nil
+		if destInfo, dErr := os.Stat(destFilePath); dErr == nil {
+			var srcHash, dstHash string
+			if destInfo.Size() == info.Size() {
+				var sErr, dstErr error
+				srcHash, sErr = integrity.HashFile(path)
+				dstHash, dstErr = integrity.HashFile(destFilePath)
+				if sErr == nil && dstErr == nil && srcHash == dstHash {
+					result.Skipped = append(result.Skipped, SkippedFile{
+						RelPath: relPath,
+						Reason:  "identical content already at destination",
+					})
+					return nil
+				}
 			}
 
 			if opts.ConflictPolicy == ConflictPolicyAbort {
+				if srcHash == "" {
+					srcHash, _ = integrity.HashFile(path)
+				}
+				if dstHash == "" {
+					dstHash, _ = integrity.HashFile(destFilePath)
+				}
 				result.Conflicts = append(result.Conflicts, ConflictFile{
 					RelPath:     relPath,
 					SourceHash:  srcHash,
@@ -370,8 +403,6 @@ func (e *Engine) TransferDirectory(sourceRoot, destRoot string, opts Options) (*
 			} else if opts.ConflictPolicy == ConflictPolicyPreserve {
 				result.Conflicts = append(result.Conflicts, ConflictFile{
 					RelPath:     relPath,
-					SourceHash:  srcHash,
-					DestHash:    dstHash,
 					ActionTaken: "preserved existing copy",
 				})
 			}
@@ -423,4 +454,20 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return out.Sync()
+}
+
+// uniqueConflictPath returns an unused, collision-free backup filename for a conflict.
+func uniqueConflictPath(basePath string) string {
+	timestamp := time.Now().UTC().Format("20060102T150405Z")
+	candidate := fmt.Sprintf("%s.conflict.%s", basePath, timestamp)
+	if _, err := os.Lstat(candidate); os.IsNotExist(err) {
+		return candidate
+	}
+
+	for i := 1; ; i++ {
+		candidateWithCounter := fmt.Sprintf("%s.conflict.%s.%d", basePath, timestamp, i)
+		if _, err := os.Lstat(candidateWithCounter); os.IsNotExist(err) {
+			return candidateWithCounter
+		}
+	}
 }

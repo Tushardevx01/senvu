@@ -243,6 +243,37 @@ func TestSummaryChanges(t *testing.T) {
 	}
 }
 
+func TestCompareDeterministicOrder(t *testing.T) {
+	source := []manifest.FileEntry{
+		entry("z.txt", "hashZ", 100),
+		entry("a.txt", "hashA", 100),
+		entry("m.txt", "hashM", 100),
+	}
+	dest := []manifest.FileEntry{
+		entry("z.txt", "hashZ_diff", 100),
+		entry("a.txt", "hashA", 100),
+		entry("b.txt", "hashB", 100),
+		entry("c.txt", "hashC", 100),
+	}
+
+	result := Compare(source, dest)
+
+	// Modified should have z.txt
+	if len(result.Modified) != 1 || result.Modified[0].RelPath != "z.txt" {
+		t.Fatalf("expected modified [z.txt], got %+v", result.Modified)
+	}
+
+	// Removed should have m.txt
+	if len(result.Removed) != 1 || result.Removed[0].RelPath != "m.txt" {
+		t.Fatalf("expected removed [m.txt], got %+v", result.Removed)
+	}
+
+	// Added should be sorted: b.txt, c.txt
+	if len(result.Added) != 2 || result.Added[0].RelPath != "b.txt" || result.Added[1].RelPath != "c.txt" {
+		t.Fatalf("expected added [b.txt, c.txt], got %+v", result.Added)
+	}
+}
+
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && searchString(s, substr)
 }

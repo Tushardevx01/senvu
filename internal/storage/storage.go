@@ -43,6 +43,10 @@ type Store interface {
 	GetSnapshot(id string) (*manifest.Manifest, error)
 	// GetSnapshotFiles returns the file entries for a snapshot.
 	GetSnapshotFiles(id string) ([]manifest.FileEntry, error)
+	// RecordOperation logs an operation execution in the database.
+	RecordOperation(opType, snapshotID, status, details string) error
+	// RecordWorkspace records workspace registration metadata.
+	RecordWorkspace(rootPath, version string) error
 }
 
 // SQLiteStore implements Store using a SQLite database.
@@ -68,11 +72,19 @@ func Open(dbPath string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("setting journal mode: %w", err)
 	}
 
+	// Enable busy timeout (10 seconds) so concurrent operations wait for locks.
+	if _, err := db.Exec("PRAGMA busy_timeout=10000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("setting busy timeout: %w", err)
+	}
+
 	// Enable foreign keys.
 	if _, err := db.Exec("PRAGMA foreign_keys=ON"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("enabling foreign keys: %w", err)
 	}
+
+	db.SetMaxOpenConns(1)
 
 	store := &SQLiteStore{db: db}
 	if err := store.migrate(); err != nil {
@@ -363,4 +375,42 @@ func (s *SQLiteStore) SchemaVersion() (int, error) {
 		return 0, fmt.Errorf("reading schema version: %w", err)
 	}
 	return version, nil
+}
+
+// RecordOperation logs an operation execution into the operations table.
+func (s *SQLiteStore) RecordOperation(opType, snapshotID, status, details string) error {
+	var snapVal interface{}
+	if snapshotID != "" {
+		snapVal = snapshotID
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`
+		INSERT INTO operations (operation_type, snapshot_id, started_at, completed_at, status, details)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		opType,
+		snapVal,
+		now,
+		now,
+		status,
+		details,
+	)
+	if err != nil {
+		return fmt.Errorf("recording operation: %w", err)
+	}
+	return nil
+}
+
+// RecordWorkspace records workspace registration metadata.
+func (s *SQLiteStore) RecordWorkspace(rootPath, version string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO workspaces (root_path, created_at, senvu_version)
+		VALUES (?, ?, ?)`,
+		rootPath,
+		time.Now().UTC().Format(time.RFC3339Nano),
+		version,
+	)
+	if err != nil {
+		return fmt.Errorf("recording workspace: %w", err)
+	}
+	return nil
 }

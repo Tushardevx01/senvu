@@ -77,7 +77,7 @@ func (s *Service) Create(rootPath string) (*manifest.Manifest, error) {
 	m.TotalSize = totalSize
 
 	if len(scanErrors) > 0 {
-		m.Metadata["scan_errors"] = fmt.Sprintf("%d files had scan errors", len(scanErrors))
+		return nil, fmt.Errorf("snapshot aborted: %d files encountered errors during scan (first error: %s)", len(scanErrors), scanErrors[0])
 	}
 
 	// Validate manifest before persisting.

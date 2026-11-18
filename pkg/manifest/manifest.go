@@ -88,6 +88,7 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("hash algorithm must not be empty")
 	}
 
+	seenPaths := make(map[string]struct{}, len(m.Files))
 	for i, f := range m.Files {
 		if err := validatePath(f.RelPath); err != nil {
 			return fmt.Errorf("file %d (%q): %w", i, f.RelPath, err)
@@ -95,15 +96,24 @@ func (m *Manifest) Validate() error {
 		if f.Hash == "" {
 			return fmt.Errorf("file %d (%q): hash must not be empty", i, f.RelPath)
 		}
+		if _, exists := seenPaths[f.RelPath]; exists {
+			return fmt.Errorf("duplicate file path in manifest: %q", f.RelPath)
+		}
+		seenPaths[f.RelPath] = struct{}{}
 	}
 
 	return nil
 }
 
-// validatePath checks that a relative path is safe: no traversal and not absolute.
+// validatePath checks that a relative path is safe: no traversal, not absolute, no null bytes.
 func validatePath(p string) error {
 	if p == "" {
 		return fmt.Errorf("path must not be empty")
+	}
+
+	// Reject null bytes.
+	if strings.ContainsRune(p, 0) {
+		return fmt.Errorf("path contains null byte: %q", p)
 	}
 
 	// Reject absolute paths.
@@ -128,7 +138,7 @@ func validatePath(p string) error {
 	return nil
 }
 
-// Save writes the manifest to path as pretty-printed JSON.
+// Save writes the manifest to path as pretty-printed JSON atomically.
 func (m *Manifest) Save(path string) error {
 	if err := m.Validate(); err != nil {
 		return fmt.Errorf("manifest validation failed: %w", err)
@@ -139,14 +149,41 @@ func (m *Manifest) Save(path string) error {
 		return fmt.Errorf("marshaling manifest: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating manifest directory: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("writing manifest file: %w", err)
+	tmp, err := os.CreateTemp(dir, ".senvu-manifest-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp manifest file: %w", err)
+	}
+	tmpName := tmp.Name()
+	cleanTmp := true
+	defer func() {
+		if cleanTmp {
+			tmp.Close()
+			os.Remove(tmpName)
+		}
+	}()
+
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("writing manifest temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("syncing manifest temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing manifest temp file: %w", err)
 	}
 
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(path)
+		if retryErr := os.Rename(tmpName, path); retryErr != nil {
+			return fmt.Errorf("atomic rename manifest to %q: %w", path, err)
+		}
+	}
+	cleanTmp = false
 	return nil
 }
 

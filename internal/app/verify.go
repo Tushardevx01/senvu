@@ -150,8 +150,8 @@ func Verify(rootPath string, m *manifest.Manifest) (*VerifyResult, error) {
 	sort.Strings(result.Missing)
 	sort.Strings(result.Unexpected)
 
-	// Passed is true only if zero missing, zero modified, and zero errors.
-	result.Passed = len(result.Missing) == 0 && len(result.Modified) == 0 && len(result.Errors) == 0
+	// Passed is true only if zero missing, zero modified, zero unexpected, and zero errors.
+	result.Passed = len(result.Missing) == 0 && len(result.Modified) == 0 && len(result.Unexpected) == 0 && len(result.Errors) == 0
 
 	return result, nil
 }
