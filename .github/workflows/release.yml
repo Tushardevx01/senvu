@@ -66,7 +66,7 @@ jobs:
       - name: Generate Checksums Manifest
         run: |
           cd release-artifacts
-          sha256sum senvu-* > checksums.txt || true
+          ls -1 senvu-* | grep -v '\.sha256$' | xargs sha256sum > checksums.txt
           cat checksums.txt
 
       - name: Create Release

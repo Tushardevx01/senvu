@@ -123,7 +123,7 @@ senvu report export --format json -o report.json
 | `snapshot show` | `senvu snapshot show <id> [--workspace dir]` | Inspect detailed file entries and metadata for a snapshot |
 | `compare` | `senvu compare <source> <dest>` | Compare two directories; detects added, removed, modified, unchanged, renamed |
 | `verify` | `senvu verify [dir] [--manifest file.json]` | Verify files against a trusted manifest or snapshot (Exit: 0 pass, 1 diff, 2 err) |
-| `transfer` | `senvu transfer <source> <dest> [--dry-run]` | Safely transfer files with atomic writes, metadata preservation, and conflict checks |
+| `transfer` | `senvu transfer <source> <dest> [--dry-run]` | Safely transfer files with staged writes, metadata preservation, and conflict checks |
 | `reconcile` | `senvu reconcile <source> <dest> [--dry-run]` | Generate a safe reconciliation plan; preserves conflicts as `.conflict.<timestamp>` |
 | `report` | `senvu report [snapshot-id]` | Display workspace or snapshot status report |
 | `report export` | `senvu report export [--format json\|text]` | Export structured report to standard output or file |
