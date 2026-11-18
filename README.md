@@ -168,17 +168,18 @@ For detailed component documentation, see [docs/architecture.md](docs/architectu
 
 ## Safety Guarantees & Known Limitations
 
-### Guarantees
-- **True Content Equality**: Files are verified using cryptographic BLAKE3 hashes, preventing false positives from identical timestamps or sizes.
+### Safety Guarantees
+- **True Content Equality**: Files are verified using cryptographic BLAKE3 hashes, preventing false positives from identical timestamps or sizes alone.
 - **Unambiguous Rename Detection**: Rename tracking only links files when exactly one removed file and one added file share the identical hash.
-- **Atomic File Operations**: File writes use staged temporary files in the target directory and atomic renames, preventing truncated writes on power loss.
-- **Path Traversal Protection**: All paths in manifests and commands are checked against `..` escapes and symlink redirects.
+- **Staged File Operations**: File writes use staged temporary files in the target directory with sync before rename, avoiding in-place truncation during writes on supported local filesystems.
+- **Path Traversal Protection**: All paths in manifests and commands are checked against `..` escapes, null bytes, and symlink redirects.
 - **Data Preservation**: Reconciliation never deletes destination-only files and backs up conflicted copies before applying updates.
 
 ### Known Limitations
-- Senvu is an integrity and portability toolkit, not a background backup daemon or continuous synchronization service.
-- Manifests and databases are currently stored in unencrypted plaintext on disk (encryption is planned for Phase 5).
-- Manifest digital signing (PKI / Ed25519) is planned for a future release.
+- **Not a Sync Daemon**: Senvu is an on-demand integrity and portability toolkit, not a background continuous synchronization daemon.
+- **Filesystem Semantics**: Rename atomicity relies on local filesystem semantics (standard POSIX); network mounts or non-POSIX filesystems may not guarantee atomic replacement.
+- **No Encryption Yet**: Manifests and SQLite databases are currently stored in unencrypted plaintext on disk (encryption is planned for Phase 5).
+- **No Digital Signatures Yet**: Manifest digital signing (PKI / Ed25519) is planned for a future release.
 
 ---
 

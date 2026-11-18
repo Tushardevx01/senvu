@@ -15,8 +15,11 @@ import (
 )
 
 const (
-	version = "0.1.0"
 	tagline = "Keep every copy trustworthy."
+)
+
+var (
+	version = "0.1.0"
 )
 
 var (

@@ -77,7 +77,7 @@ Senvu is structured as a **modular monolithic CLI tool** in Go. It enforces stri
 #### Transfer Engine (`internal/transfer`)
 - Provides safe, verified file transfers.
 - Preserves file timestamps (`os.Chtimes`) and file modes (`os.Chmod`).
-- Implements atomic staging: writes to `.senvu-transfer-*` in the target directory, verifies written content hash against source hash, and atomically renames.
+- Implements staged transfer: writes to `.senvu-transfer-*` in the target directory, verifies written content hash against source hash, and performs rename replacement (atomic on POSIX filesystems).
 - Fallback for cross-device moves (`EXDEV`).
 - Conflict detection: by default (`ConflictPolicyAbort`), refuses to overwrite divergent files.
 
@@ -112,4 +112,4 @@ Senvu is structured as a **modular monolithic CLI tool** in Go. It enforces stri
    - Zero network connectivity. Senvu contains no telemetry, remote reporting, or external API calls.
 3. **Data Loss Prevention**:
    - Non-destructive by default.
-   - Atomic rename and temporary file cleaning prevent incomplete or corrupted file writes.
+   - Staged temporary writes and rename replacement prevent incomplete or corrupted file writes on supported filesystems.

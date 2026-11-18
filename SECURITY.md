@@ -26,12 +26,9 @@ All file paths derived from manifest data or user input are validated against th
 - File operations validate that resolved paths remain within the workspace boundary
 - `platform.ValidateDestination()` checks that target paths don't escape the allowed root
 
-### Atomic Writes
+### Staged Writes & Rename Replacement
 
-All file writes use `platform.AtomicWrite()` — a temporary file is written in the same directory, synced to disk, and then atomically renamed to the target path. This prevents:
-
-- Partial writes from corrupting existing files
-- Data loss from interrupted operations
+File writes use `platform.AtomicWrite()` — a temporary file is written in the same directory, synced to disk, and then renamed to the target path. On standard POSIX-compliant local filesystems, this provides atomic replacement preventing truncated files from interrupted processes or sudden power loss. On network-attached storage or non-POSIX filesystems, rename atomicity depends on the host environment's filesystem implementation.
 
 ### No Network Connectivity
 
@@ -50,6 +47,8 @@ Senvu does not collect, transmit, or store any user data beyond what is explicit
 
 ## Known Limitations
 
+- **Filesystem semantics:** Staged writes and atomic renames rely on the underlying OS and filesystem semantics; network filesystems (e.g., NFS, SMB) or non-POSIX platforms may not guarantee atomic replacement.
+- **Concurrent live modifications:** Senvu detects file modifications that occur mid-hash via post-read stat checks, but continuous concurrent modifications by external programs during a scan or transfer may require re-running the operation once writes quiesce.
 - **No encryption**: Manifests and snapshot data are stored as plaintext JSON. Anyone with filesystem access to the `.senvu/` directory can read them. Encryption support is planned for a future release.
 - **No signature verification**: Manifests are not cryptographically signed. A manifest received from an external source cannot be verified as authentic. Signature support is planned.
 - **No access control**: Senvu relies entirely on OS-level file permissions. It does not implement its own access control.
